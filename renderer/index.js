@@ -7,7 +7,6 @@
 //   6. 设置页：每项单独开关
 // 消息数据从 .message 元素上的 __VUE__[0].props.msgRecord 读（QQ 9.9.36 实测）。
 import { installStickers, NATIVE_TABS } from "./stickers.js";
-import { installPangu } from "./pangu.js";
 
 const api = window.qq_enhance;
 let config = { antiRecall: true, chatPos: true, repeat: true, quoteNoAt: true, arkExternal: true, pangu: true, stickers: true, stickerDir: "", showEmojiSearch: true, showEmojiDefault: true, showEmojiFav: true };
@@ -415,7 +414,6 @@ function start() {
     reloadRecalled();
     api.onRecalled((id, nick) => { recalled.set(String(id), nick || "对方"); markRecalled(); });
     if (location.hash.indexOf("#/setting") !== 0) stickers = installStickers(api, () => config, toast);
-    if (location.hash.indexOf("#/setting") !== 0) installPangu(() => config, toast);
 
     // DOM 变动后 150ms 跑一次（滚动时合并成一次，不每帧跑）
     let timer = 0;
