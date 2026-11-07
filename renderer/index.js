@@ -7,9 +7,10 @@
 //   6. 设置页：每项单独开关
 // 消息数据从 .message 元素上的 __VUE__[0].props.msgRecord 读（QQ 9.9.36 实测）。
 import { installStickers, NATIVE_TABS } from "./stickers.js";
+import { installPangu } from "./pangu.js";
 
 const api = window.qq_enhance;
-let config = { antiRecall: true, chatPos: true, repeat: true, quoteNoAt: true, arkExternal: true, stickers: true, stickerDir: "", showEmojiSearch: true, showEmojiDefault: true, showEmojiFav: true };
+let config = { antiRecall: true, chatPos: true, repeat: true, quoteNoAt: true, arkExternal: true, pangu: true, stickers: true, stickerDir: "", showEmojiSearch: true, showEmojiDefault: true, showEmojiFav: true };
 let stickers = null;
 
 function recordOf(el) {
@@ -414,6 +415,7 @@ function start() {
     reloadRecalled();
     api.onRecalled((id, nick) => { recalled.set(String(id), nick || "对方"); markRecalled(); });
     if (location.hash.indexOf("#/setting") !== 0) stickers = installStickers(api, () => config, toast);
+    if (location.hash.indexOf("#/setting") !== 0) installPangu(() => config, toast);
 
     // DOM 变动后 150ms 跑一次（滚动时合并成一次，不每帧跑）
     let timer = 0;
@@ -435,6 +437,7 @@ const FEATURES = [
     ["chatPos", "记住浏览位置", "切回会话时停在上次看到的地方，而不是跳到最底下。"],
     ["repeat", "右键复读", "消息右键菜单里加一项「复读」，把这条消息原样再发一次。"],
     ["quoteNoAt", "引用时不带 @", "点「引用」时，不自动在输入框里插入 @对方。"],
+    ["pangu", "发送时自动 pangu", "中英文、中文与数字之间自动补空格。消息开头打两个逗号（,, 或 ，，）则这条不处理，逗号本身也会去掉。"],
     ["arkExternal", "卡片用浏览器打开", "点 B 站等分享卡片（QQ小程序），用电脑默认浏览器打开网页，不再弹「文件已损坏」。"],
     ["stickers", "本地表情包", "表情面板底部多一个「本地表情」分类，发送表情文件夹里的图片。每个子文件夹是一个分组，另有收藏分组。"],
 ];
