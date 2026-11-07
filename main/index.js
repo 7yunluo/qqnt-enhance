@@ -383,6 +383,8 @@ ipcMain.handle(CH.openExternal, async (_e, url) => {
  * 发送照 BetterQQNT 的本地表情：问内核要富媒体路径 → 把图拷过去 → sendMsg 一个 picElement。 */
 const DEFAULT_STICKER_DIR = path.join(DATA, "stickers");
 const FAV_FILE = path.join(DATA, "sticker-favs.json");
+const RECENT_FILE = path.join(DATA, "sticker-recents.json");
+const RECENT_MAX = 100;                 // 最近使用最多记多少条
 const STICKER_CACHE = path.join(DATA, "sticker-cache");
 const IMG_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp"]);
 const MAX_PER_GROUP = 2000;
@@ -397,6 +399,14 @@ let favs = [];
 try { favs = JSON.parse(fs.readFileSync(FAV_FILE, "utf8")).filter(x => typeof x === "string"); } catch (e) { favs = []; }
 function saveFavs() {
     try { fs.writeFileSync(FAV_FILE, JSON.stringify(favs)); } catch (e) { log("save favs failed: " + e.message); }
+}
+
+/* 最近使用：从新到旧，同一个表情再发一次就提到最前 */
+let recents = [];
+try { recents = JSON.parse(fs.readFileSync(RECENT_FILE, "utf8")).filter(x => typeof x === "string"); } catch (e) { recents = []; }
+function pushRecent(p) {
+    recents = [p].concat(recents.filter(x => x !== p)).slice(0, RECENT_MAX);
+    try { fs.writeFileSync(RECENT_FILE, JSON.stringify(recents)); } catch (e) { log("save recents failed: " + e.message); }
 }
 
 const extOf = p => path.extname(p).slice(1).toLowerCase();
@@ -427,7 +437,8 @@ function listStickers() {
     }
     if (loose.length) groups.push({ name: "未分组", files: loose.slice(0, MAX_PER_GROUP) });
     const existing = favs.filter(f => fs.existsSync(f));
-    return { root, groups, favs: existing, isDefault: !config.stickerDir };
+    const recentFiles = recents.filter(f => fs.existsSync(f));
+    return { root, groups, favs: existing, recents: recentFiles, isDefault: !config.stickerDir };
 }
 
 function insideRoot(p) {
@@ -531,6 +542,7 @@ ipcMain.handle(CH.stickerSend, async (event, peer, file, hint) => {
             msgAttributeInfos: new Map(),
         }, null]);
         log("sticker " + path.basename(file) + " -> " + JSON.stringify(res).slice(0, 160));
+        if (res && !res.error && (res.result === undefined || res.result === 0)) pushRecent(file);
         return res;
     } catch (e) {
         log("sticker failed: " + (e && e.stack || e));

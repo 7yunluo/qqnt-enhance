@@ -14,8 +14,10 @@ const ICON_REFRESH = '<svg viewBox="0 0 24 24" width="16" height="16" fill="curr
 
 const ICON_BACK = '<svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm3.5-9c.83 0 1.5-.67 1.5-1.5S16.33 8 15.5 8 14 8.67 14 9.5s.67 1.5 1.5 1.5zm-7 0c.83 0 1.5-.67 1.5-1.5S9.33 8 8.5 8 7 8.67 7 9.5 7.67 11 8.5 11zm3.5 6.5c2.33 0 4.31-1.46 5.11-3.5H6.89c.8 2.04 2.78 3.5 5.11 3.5z"/></svg>';
 const STAR_BIG = '<svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>';
+const CLOCK_BIG = '<svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>';
 const LABEL = "本地表情";
 const FAV = "\u0000fav";
+const RECENT = "\u0000recent";
 const TAB_KEY = "qq-enhance-sticker-tab";
 const ORDER_KEY = "qq-enhance-sticker-order";
 const LAST_KEY = "qq-enhance-sticker-last";   // 关面板时是否停在本地表情页（重启/刷新后也记得）
@@ -78,7 +80,10 @@ const CSS = `
 body.qe-st-active .expression-panel .sticker-panel > :first-child,
 body.qe-st-active .expression-panel .sticker-panel__pages,
 body.qe-st-active .expression-panel .sticker-panel__divide,
-body.qe-st-active .expression-panel .sticker-panel__bar { visibility: hidden !important; }
+body.qe-st-active .expression-panel .sticker-panel__bar,
+body[data-qe-st-last] .expression-panel .sticker-panel > :first-child,
+body[data-qe-st-last] .expression-panel .sticker-panel__pages,
+body[data-qe-st-last] .expression-panel .sticker-panel__divide { visibility: hidden !important; }
 body[data-qe-hide-search] .expression-panel .tabs-container-item[aria-label="搜索表情"],
 body[data-qe-hide-default] .expression-panel .tabs-container-item[aria-label="默认表情"],
 body[data-qe-hide-fav] .expression-panel .tabs-container-item[aria-label="我的收藏"] { display: none !important; }
@@ -108,7 +113,15 @@ export function installStickers(api, getConfig, toast) {
     let active = false;          // 本地表情页是否打开
     // 上次关面板时停在本地表情页：下次打开直接回到这里。存进 localStorage，刷新/重启也记得
     let lastOursVal = localStorage.getItem(LAST_KEY) === "1";
-    const setLast = v => { lastOursVal = !!v; try { localStorage.setItem(LAST_KEY, v ? "1" : "0"); } catch (e) {} };
+    /* data-qe-st-last：记得停在本地表情页时，面板一打开就先藏起 QQ 自己的内容，
+     * 免得先闪一下原生表情面板（见 CSS 里那段选择器） */
+    const setLast = v => {
+        lastOursVal = !!v;
+        try { localStorage.setItem(LAST_KEY, v ? "1" : "0"); } catch (e) { }
+        if (lastOursVal) document.body.dataset.qeStLast = "1";
+        else delete document.body.dataset.qeStLast;
+    };
+    if (lastOursVal) document.body.dataset.qeStLast = "1";
     let panelWasOpen = false;
     let recheck = 0, recheckLeft = 0;
     let raf = 0;
@@ -163,7 +176,7 @@ export function installStickers(api, getConfig, toast) {
         try { data = await api.stickerList(); } catch (e) { data = { groups: [], favs: [], root: "" }; }
         sortGroups();
         favSet = new Set(data.favs || []);
-        if (tab !== FAV && !data.groups.some(g => g.name === tab)) tab = FAV;
+        if (tab !== FAV && tab !== RECENT && !data.groups.some(g => g.name === tab)) tab = FAV;
         if (active) render();
     }
 
@@ -204,13 +217,13 @@ export function installStickers(api, getConfig, toast) {
         const clearMarks = () => tabsEl.querySelectorAll(".is-drop-before, .is-drop-after").forEach(n => n.classList.remove("is-drop-before", "is-drop-after"));
         const dropTarget = e => {
             const b = e.target.closest && e.target.closest(".qe-sp-tabs .qe-sp-tab");
-            if (!b || b.dataset.tab === FAV) return null;
+            if (!b || b.dataset.tab === FAV || b.dataset.tab === RECENT) return null;
             const r = b.getBoundingClientRect();
             return { b, after: e.clientX > r.left + r.width / 2 };
         };
         tabsEl.addEventListener("dragstart", e => {
             const b = e.target.closest(".qe-sp-tab");
-            if (!b || b.dataset.tab === FAV) { e.preventDefault(); return; }
+            if (!b || b.dataset.tab === FAV || b.dataset.tab === RECENT) { e.preventDefault(); return; }
             dragName = b.dataset.tab;
             b.classList.add("is-dragging");
             e.dataTransfer.effectAllowed = "move";
@@ -288,14 +301,15 @@ export function installStickers(api, getConfig, toast) {
         const hint = img ? { w: img.naturalWidth, h: img.naturalHeight } : null;
         if (close) closePanel();
         api.stickerSend(peer, cell.dataset.path, hint).then(res => {
-            if (res && (res.error || (res.result !== undefined && res.result !== 0))) toast("发送失败：" + (res.error || res.errMsg || res.result));
+            if (res && (res.error || (res.result !== undefined && res.result !== 0))) { toast("发送失败：" + (res.error || res.errMsg || res.result)); return; }
+            if (tab === RECENT) reload();              // 最近使用页：刚发的那张要挪到最前
         }).catch(() => toast("发送失败"));
     }
 
     function render() {
         if (!view) return;
         tabsEl.innerHTML = "";
-        const tabs = [{ id: FAV, name: "收藏" }].concat(data.groups.map(g => ({ id: g.name, name: g.name, cover: g.files[0] })));
+        const tabs = [{ id: FAV, name: "收藏" }, { id: RECENT, name: "最近使用" }].concat(data.groups.map(g => ({ id: g.name, name: g.name, cover: g.files[0] })));
         for (const it of tabs) {
             const b = document.createElement("button");
             b.type = "button";
@@ -303,6 +317,7 @@ export function installStickers(api, getConfig, toast) {
             b.dataset.tab = it.id;
             b.title = it.name;
             if (it.id === FAV) b.innerHTML = STAR_BIG;
+            else if (it.id === RECENT) b.innerHTML = CLOCK_BIG;
             else {
                 b.draggable = true;
                 b.title = it.name + "（拖动可调整顺序）";
@@ -321,11 +336,13 @@ export function installStickers(api, getConfig, toast) {
             if (l < tabsEl.scrollLeft) tabsEl.scrollLeft = l;
             else if (rgt > tabsEl.scrollLeft + tabsEl.clientWidth) tabsEl.scrollLeft = rgt - tabsEl.clientWidth;
         }
-        const files = tab === FAV ? data.favs : ((data.groups.find(g => g.name === tab) || {}).files || []);
+        const files = tab === FAV ? data.favs
+            : tab === RECENT ? (data.recents || [])
+                : ((data.groups.find(g => g.name === tab) || {}).files || []);
         grid.innerHTML = "";
         const title = document.createElement("div");
         title.className = "qe-sp-title";
-        title.textContent = (tab === FAV ? "收藏" : tab) + (files.length ? " · " + files.length : "");
+        title.textContent = (tab === FAV ? "收藏" : tab === RECENT ? "最近使用" : tab) + (files.length ? " · " + files.length : "");
         grid.appendChild(title);
         if (!files.length) {
             const empty = document.createElement("div");
@@ -333,6 +350,7 @@ export function installStickers(api, getConfig, toast) {
             if (tab === FAV) empty.innerHTML = data.groups.length
                 ? "还没有收藏<br>在表情上点右上角的星标，或右键它，就会收进这里"
                 : "表情文件夹是空的<br>点右下角<b>文件夹</b>按钮，把图片放进去<br>每个子文件夹会成为一个分组";
+            else if (tab === RECENT) empty.textContent = "还没有用过本地表情<br>发出一个之后，最近发过的会按时间从新到旧排在这里";
             else empty.textContent = "这个分组里没有图片";
             grid.appendChild(empty);
             return;
@@ -439,8 +457,27 @@ export function installStickers(api, getConfig, toast) {
         }
     }
 
+    /* 面板一露头就同步切过来：MutationObserver 的回调在微任务里跑，早于下一帧绘制，
+     * 所以不会先看到 QQ 原生的表情面板再跳到本地表情页。 */
+    let wakeObs = null, wakeHost = null;
+    function watchPanel() {
+        const host = document.querySelector(".chat-input-area .expression-panel") || document.querySelector(".chat-input-area");
+        if (!host || host === wakeHost) return;
+        if (wakeObs) wakeObs.disconnect();
+        wakeHost = host;
+        wakeObs = new MutationObserver(function () {
+            try {
+                if (active || !lastOursVal) return;
+                if (!stickerPanel()) return;
+                activate();
+            } catch (e) { /* 静默 */ }
+        });
+        wakeObs.observe(host, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "style"] });
+    }
+
     function ensureTab() {
         applyNativeTabs();
+        watchPanel();
         const bar = document.querySelector(".expression-panel .sticker-panel__bar");
         const tc = bar && bar.querySelector(".tabs-container");
         const on = !!getConfig().stickers;
@@ -476,5 +513,6 @@ export function installStickers(api, getConfig, toast) {
         if (justOpened && lastOursVal && !active) activate();
     }
 
+    reload();                       // 先拉一次列表：面板第一次打开就能直接画出图
     return { ensure: ensureTab, reload, hide: deactivate };
 }
