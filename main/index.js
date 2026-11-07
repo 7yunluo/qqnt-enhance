@@ -10,6 +10,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const { execFile } = require("node:child_process");
 const { ipcMain, BrowserWindow, shell, dialog } = require("electron");
 
 const SLUG = "qq-enhance";
@@ -37,8 +38,7 @@ const CH = {
     stickerPickDir: "LiteLoader.qq_enhance.stickerPickDir",
 };
 
-const DEFAULTS = { antiRecall: true, chatPos: true, repeat: true, pokeNoCd: true, quoteNoAt: true, arkExternal: true, pangu: true, stickers: true, stickerDir: "", showEmojiSearch: true, showEmojiDefault: true, showEmojiFav: true };
-
+const DEFAULTS = { antiRecall: true, chatPos: true, repeat: true, pokeNoCd: true, quoteNoAt: true, arkExternal: true, pangu: true, stickers: true, stickerDir: "", showEmojiSearch: true, showEmojiDefault: true, showEmojiFav: true, linkExternal: true };
 fs.mkdirSync(MSG_DIR, { recursive: true });
 
 function log(message) {
@@ -339,14 +339,41 @@ ipcMain.handle(CH.poke, async (event, ctx) => {
     }
 });
 
-/* ---------- 卡片用外部浏览器打开：只放行 http/https ---------- */
+/* ---------- 卡片/链接用系统默认浏览器打开：只放行 http/https ----------
+ * QQ 7.x 会把 electron.shell.openExternal 接管到内置浏览器。
+ * macOS 直接用 /usr/bin/open 走 LaunchServices（QQ 的 sandbox 实测允许），
+ * 这样才能确保打开系统默认浏览器；其他平台再回退到 Electron 的 shell。 */
+async function openExternalSystem(url) {
+    if (process.platform === "darwin") {
+        const ok = await new Promise(resolve => {
+            execFile("/usr/bin/open", [url], { timeout: 5000 }, err => {
+                if (!err) { log("open external (open) " + url); resolve(true); }
+                else { log("open cmd failed: " + err.message); resolve(false); }
+            });
+        });
+        if (ok) return true;
+    }
+    try {
+        const bind = process._linkedBinding("electron_common_shell");
+        if (bind && typeof bind.openExternal === "function") {
+            const r = bind.openExternal(url, { activate: true });
+            if (r && typeof r.then === "function") await r;
+            log("open external (binding) " + url);
+            return true;
+        }
+    } catch (e) { log("binding open failed: " + e.message); }
+    try {
+        await shell.openExternal(url);
+        log("open external (shell) " + url);
+        return true;
+    } catch (e) { log("open external failed: " + e.message); return false; }
+}
+
 ipcMain.handle(CH.openExternal, async (_e, url) => {
     try {
         const u = new URL(String(url));
         if (u.protocol !== "http:" && u.protocol !== "https:") return false;
-        await shell.openExternal(u.href);
-        log("open external " + u.href);
-        return true;
+        return await openExternalSystem(u.href);
     } catch (e) { log("open external failed: " + e.message); return false; }
 });
 

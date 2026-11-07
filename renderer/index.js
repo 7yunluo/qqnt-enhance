@@ -9,7 +9,7 @@
 import { installStickers, NATIVE_TABS } from "./stickers.js";
 
 const api = window.qq_enhance;
-let config = { antiRecall: true, chatPos: true, repeat: true, pokeNoCd: true, quoteNoAt: true, arkExternal: true, pangu: true, stickers: true, stickerDir: "", showEmojiSearch: true, showEmojiDefault: true, showEmojiFav: true };
+let config = { antiRecall: true, chatPos: true, repeat: true, pokeNoCd: true, quoteNoAt: true, arkExternal: true, pangu: true, stickers: true, stickerDir: "", showEmojiSearch: true, showEmojiDefault: true, showEmojiFav: true, linkExternal: true };
 let stickers = null;
 
 function recordOf(el) {
@@ -430,10 +430,58 @@ function arkUrl(rec) {
 
 function arkTarget(e) {
     if (!config.arkExternal || e.button !== 0) return null;
-    const card = e.target && e.target.closest && e.target.closest(".ark-msg-content-container .ark-item-container");
+    // QQ 7.x 的卡片容器只有 .ark-msg-content-container；旧版的 .ark-item-container 不存在
+    const card = e.target && e.target.closest && e.target.closest(".ark-msg-content-container");
     if (!card) return null;
     return arkUrl(recordOf(card)) || null;
 }
+
+/* 消息里的 http/https 链接：QQ 用 .text-element 渲染，不是 <a>。
+ * 在 pointerdown 就拦，QQ 7.x 到 click 阶段已经交给内置浏览器了。 */
+function textUrl(text) {
+    const s = String(text || "");
+    const m = s.match(/https?:\/\/[^\s<>"'）】]+/i) || s.match(/www\.[^\s<>"'）】]+/i);
+    if (!m) return "";
+    let u = m[0];
+    if (!/^https?:\/\//i.test(u)) u = "https://" + u;
+    return u.replace(/[.,;:!?，。；：！？)）\]】}>]+$/g, "");
+}
+
+function linkTarget(e) {
+    if (!config.linkExternal || e.button !== 0) return null;
+    try { if (window.getSelection && String(window.getSelection()).length) return null; } catch (err) {}
+    const a = e.target && e.target.closest && e.target.closest("a[href]");
+    if (a && /^https?:\/\//i.test(a.href)) return a.href;
+    const el = e.target && e.target.closest && e.target.closest(".text-element, .markdown-element");
+    if (!el) return null;
+    const direct = textUrl(el.innerText || el.textContent);
+    if (direct) return direct;
+    // 有些 URL 消息显示的是“网页链接”之类的摘要，真实 URL 只在 msgRecord 里
+    const rec = recordOf(el);
+    if (rec && Array.isArray(rec.elements)) {
+        for (const x of rec.elements) {
+            if (x && x.textElement && /https?:\/\//i.test(x.textElement.content || "")) return textUrl(x.textElement.content);
+        }
+    }
+    return null;
+}
+
+let lastLinkOpen = 0;
+function openLinkExternal(url) {
+    const now = Date.now();
+    if (now - lastLinkOpen < 500) return;
+    lastLinkOpen = now;
+    api.openExternal(url).then(ok => toast(ok ? "已用浏览器打开" : "打不开这个链接")).catch(() => {});
+}
+
+["pointerdown", "click"].forEach(type =>
+    document.addEventListener(type, e => {
+        const url = linkTarget(e);
+        if (!url) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        openLinkExternal(url);
+    }, true));
 
 ["pointerdown", "mousedown", "pointerup", "mouseup", "click", "dblclick"].forEach(type =>
     document.addEventListener(type, e => {
@@ -483,6 +531,7 @@ const FEATURES = [
     ["quoteNoAt", "引用时不带 @", "点「引用」时，不自动在输入框里插入 @对方。"],
     ["pangu", "发送时自动 pangu", "中英文、中文与数字之间自动补空格。消息开头打两个逗号（,, 或 ，，）则这条不处理，逗号本身也会去掉。"],
     ["arkExternal", "卡片用浏览器打开", "点 B 站等分享卡片（QQ小程序），用电脑默认浏览器打开网页，不再弹「文件已损坏」。"],
+    ["linkExternal", "消息链接用浏览器打开", "点消息里的 http/https 链接时用系统默认浏览器打开，不再使用 QQ 内置浏览器。"],
     ["stickers", "本地表情包", "表情面板底部多一个「本地表情」分类，发送表情文件夹里的图片。每个子文件夹是一个分组，另有收藏分组。"],
 ];
 
