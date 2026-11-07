@@ -33,7 +33,7 @@ const CSS = `
 #qe-sticker-view.is-open { display: flex; }
 #qe-sticker-view .qe-sp-grid {
   flex: 1; overflow-y: auto; padding: 4px 8px 8px; display: grid; align-content: start;
-  grid-template-columns: repeat(auto-fill, minmax(68px, 1fr)); grid-auto-rows: 68px; gap: 4px;
+  grid-template-columns: repeat(auto-fill, minmax(68px, 1fr)); grid-template-rows: auto; grid-auto-rows: 68px; gap: 4px;
 }
 #qe-sticker-view .qe-sp-cell {
   position: relative; height: 68px; min-width: 0; padding: 6px; box-sizing: border-box; border-radius: 8px; cursor: pointer;
