@@ -380,7 +380,8 @@ ipcMain.handle(CH.openExternal, async (_e, url) => {
 /* ---------- 本地表情包 ----------
  * 表情文件夹：根目录下的每个子文件夹是一组（子文件夹里再往下的图也算这一组），
  * 根目录里直接放的图归「未分组」。收藏单独存一份路径表，和文件夹无关。
- * 发送照 BetterQQNT 的本地表情：问内核要富媒体路径 → 把图拷过去 → sendMsg 一个 picElement。 */
+ * 发送：问内核要表情用的富媒体路径 → 把图拷过去 → sendMsg 一个 picSubType 1 的表情元素；
+ * 内核不收时退回普通图片，保证发得出去。 */
 const DEFAULT_STICKER_DIR = path.join(DATA, "stickers");
 const FAV_FILE = path.join(DATA, "sticker-favs.json");
 const RECENT_FILE = path.join(DATA, "sticker-recents.json");
@@ -502,6 +503,34 @@ ipcMain.handle(CH.stickerPickDir, async event => {
     return config;
 });
 
+/* 富媒体落盘路径：内核按 elementSubType 分目录（图片在 Pic，表情在 Emoji），
+ * 发之前得把文件放到它自己会去取的那个位置，否则上传时找不到文件。 */
+const PIC_SUBTYPE_IMAGE = 0;
+const PIC_SUBTYPE_EMOJI = 1;
+async function richMediaDst(wcId, md5, fileName, elementSubType) {
+    const dst = await invokeNT(wcId, "nodeIKernelMsgService/getRichMediaFilePathForGuild", [{
+        path_info: { md5HexStr: md5, fileName, elementType: 2, elementSubType, thumbSize: 0, needCreate: true, downloadType: 1, file_uuid: "" },
+    }, null]);
+    return typeof dst === "string" ? dst : "";
+}
+
+/* 表情目录：先按表情子类型要路径，拿到的不是 Emoji 目录就退回图片目录 */
+async function emojiDst(wcId, md5, fileName) {
+    const want = await richMediaDst(wcId, md5, fileName, PIC_SUBTYPE_EMOJI);
+    if (want && /[\\/]Emoji[\\/]/.test(want)) return want;
+    log("sticker: emoji path not found (" + want + "), try image dir");
+    return "";
+}
+
+function placeFile(file, dst) {
+    fs.mkdirSync(path.dirname(dst), { recursive: true });
+    if (!fs.existsSync(dst)) fs.copyFileSync(file, dst);
+}
+
+function sendResOk(res) {
+    return !!res && !res.error && (res.result === undefined || res.result === 0);
+}
+
 ipcMain.handle(CH.stickerSend, async (event, peer, file, hint) => {
     if (!config.stickers) return { error: "本地表情包已关闭" };
     try {
@@ -512,37 +541,40 @@ ipcMain.handle(CH.stickerSend, async (event, peer, file, hint) => {
         const ext = extOf(file) === "jpeg" ? "jpg" : extOf(file);
         const size = imageSize(buf) || { w: Number(hint && hint.w) || 200, h: Number(hint && hint.h) || 200 };
         const fileName = md5 + "." + ext;
-
         const wcId = event.sender.id;
-        let dst = await invokeNT(wcId, "nodeIKernelMsgService/getRichMediaFilePathForGuild", [{
-            path_info: { md5HexStr: md5, fileName, elementType: 2, elementSubType: 0, thumbSize: 0, needCreate: true, downloadType: 1, file_uuid: "" },
-        }, null]);
-        if (typeof dst !== "string" || !dst) {
-            log("sticker: no rich media path (" + JSON.stringify(dst).slice(0, 120) + "), use cache");
-            fs.mkdirSync(STICKER_CACHE, { recursive: true });
-            dst = path.join(STICKER_CACHE, fileName);
-        }
-        fs.mkdirSync(path.dirname(dst), { recursive: true });
-        if (!fs.existsSync(dst)) fs.copyFileSync(file, dst);
 
-        const pic = {
-            elementType: 2, elementId: "",
-            picElement: {
-                fileName, fileSize: String(buf.length), fileSubId: "", fileUuid: "", md5HexStr: md5,
-                original: true, picWidth: size.w, picHeight: size.h,
-                // picSubType 1（表情）内核会报 rich media transfer failed；按普通图片发，和 BetterQQNT 的本地表情一致
-                picSubType: 0, picType: ext === "gif" ? 2000 : 1001,
-                sourcePath: dst, summary: "", thumbFileSize: 0,
-            },
-        };
-        const res = await invokeNT(wcId, "nodeIKernelMsgService/sendMsg", [{
+        const sendPic = (picElement) => invokeNT(wcId, "nodeIKernelMsgService/sendMsg", [{
             msgId: "0",
             peer: { chatType: peer.chatType, peerUid: String(peer.peerUid), guildId: peer.guildId ? String(peer.guildId) : "" },
-            msgElements: [pic],
+            msgElements: [{ elementType: 2, elementId: "", picElement }],
             msgAttributeInfos: new Map(),
         }, null]);
-        log("sticker " + path.basename(file) + " -> " + JSON.stringify(res).slice(0, 160));
-        if (res && !res.error && (res.result === undefined || res.result === 0)) pushRecent(file);
+
+        // 按表情发：图放进内核的表情目录，元素标 picSubType 1
+        const dst = await emojiDst(wcId, md5, fileName);
+        if (dst) {
+            placeFile(file, dst);
+            const res = await sendPic({
+                fileName, fileSize: String(buf.length), fileSubId: "", fileUuid: "", md5HexStr: md5,
+                original: true, picWidth: size.w, picHeight: size.h,
+                picSubType: PIC_SUBTYPE_EMOJI, picType: ext === "gif" ? 2000 : 1000,
+                sourcePath: dst, summary: "[动画表情]", thumbFileSize: 0,
+            });
+            log("sticker as emoji " + path.basename(file) + " -> " + JSON.stringify(res).slice(0, 160));
+            if (sendResOk(res)) { pushRecent(file); return res; }
+        }
+
+        // 表情发不出去就退回普通图片，至少这张能发出去
+        const imgDst = await richMediaDst(wcId, md5, fileName, PIC_SUBTYPE_IMAGE) || path.join(STICKER_CACHE, fileName);
+        placeFile(file, imgDst);
+        const res = await sendPic({
+            fileName, fileSize: String(buf.length), fileSubId: "", fileUuid: "", md5HexStr: md5,
+            original: true, picWidth: size.w, picHeight: size.h,
+            picSubType: PIC_SUBTYPE_IMAGE, picType: ext === "gif" ? 2000 : 1001,
+            sourcePath: imgDst, summary: "", thumbFileSize: 0,
+        });
+        log("sticker as image " + path.basename(file) + " -> " + JSON.stringify(res).slice(0, 160));
+        if (sendResOk(res)) pushRecent(file);
         return res;
     } catch (e) {
         log("sticker failed: " + (e && e.stack || e));
